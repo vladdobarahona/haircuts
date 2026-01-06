@@ -1,18 +1,15 @@
 # Autor: Vladimir Alonso B. P. (para uso empresarial)
 # -*- coding: utf-8 -*-
-
-# -*- coding: utf-8 -*-
 """
 Haircuts DCV – Repos y Deuda Externa (BanRep) • Streamlit App
 Autor: vbarahona
 Fecha: 2026-01-05
 
-Mejoras:
-- Validación automática (HEAD) antes de descargar.
-- Resolución de URL con múltiples patrones (nuevo y legados).
-- PRIORIDAD: para años <= 2019 se intentan primero las rutas legadas (/paginas/...).
-- Modo batch según tipo seleccionado (repos, deuda, ambos).
-- Texto adicional en color naranja y fuente Century Gothic.
+Características:
+- Descarga directa desde CloudFront con validación HEAD.
+- Resolver universal para patrones nuevos y legados (2019+).
+- Modo batch con ZIP.
+- Caption estilizado.
 """
 
 import io
@@ -40,10 +37,7 @@ st.markdown(
 # Constantes y utilidades
 # -----------------------------
 BASE_CLOUDFRONT = "https://d1b4gd4m8561gs.cloudfront.net/sites/default/files"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (haircuts-app; +https://github.com/tu-usuario/haircuts-app)"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (haircuts-app)"}
 
 MESES = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -54,15 +48,12 @@ def listar_meses():
     return MESES
 
 def mes_capitalizado(mes: str) -> str:
-    """enero -> Enero"""
     return mes[:1].upper() + mes[1:].lower()
 
 def mes_mayus(mes: str) -> str:
-    """enero -> ENERO (para patrones tipo HAIRCUT_ENERO_2019.pdf)"""
     return mes.upper()
 
 def validar_existencia_archivo(url: str) -> bool:
-    """Verifica si el archivo existe en CloudFront usando HEAD."""
     try:
         r = requests.head(url, headers=HEADERS, timeout=15)
         return r.status_code == 200
@@ -78,73 +69,48 @@ def descargar_binario(url: str) -> bytes | None:
     except Exception:
         return None
 
-def candidatos_legados_repos(mes: str, anio: int) -> list[tuple[str, str]]:
-    """
-    Repos (ejemplos 2019): /paginas/Haircut Enero 2019.xls (.xlsx), y variante 'Haircuts '.
-    """
-    mes_cap = mes_capitalizado(mes)
-    files = [
-        (f"Haircut {mes_cap} {anio}.xlsx", "XLSX"),
-        (f"Haircut {mes_cap} {anio}.xls",  "XLS"),
-        (f"Haircuts {mes_cap} {anio}.xlsx", "XLSX"),
-        (f"Haircuts {mes_cap} {anio}.xls",  "XLS"),
-    ]
-    out = []
-    for fname, ext in files:
-        out.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext))
-    return out
-
-def candidatos_legados_deuda(mes: str, anio: int) -> list[tuple[str, str]]:
-    """
-    Deuda externa (ejemplos 2019): /paginas/HAIRCUT_ENERO_2019.pdf/.xls/.xlsx, y variante minúscula.
-    """
-    mes_up = mes_mayus(mes)
-    out = []
-    for ext in ["pdf", "xls", "xlsx"]:
-        fname = f"HAIRCUT_{mes_up}_{anio}.{ext}"
-        out.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext.upper()))
-    for ext in ["pdf", "xls", "xlsx"]:
-        fname = f"haircut_{mes_up}_{anio}.{ext}"
-        out.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext.upper()))
-    return out
-
-def candidatos_nuevos(tipo: str, mes: str, anio: int) -> list[tuple[str, str]]:
-    """
-    Nuevo formato observado: haircuts-{tipo}-{mes}-{anio}.xlsx (+.xls/.pdf como fallback).
-    """
-    base_new = f"{BASE_CLOUDFRONT}/{tipo}-{mes}-{anio}"
-    return [
-        (f"{base_new}.xlsx", "XLSX"),
-        (f"{base_new}.xls",  "XLS"),
-        (f"{base_new}.pdf",  "PDF"),  # en deuda externa a veces hay PDF
-    ]
-
 def construir_candidatos(tipo: str, mes: str, anio: int) -> list[tuple[str, str]]:
     """
-    Genera candidatos en el **orden correcto**:
-      - si anio <= 2019: primero legados, luego nuevos.
-      - si anio > 2019: primero nuevos, luego legados (respaldo).
+    Genera candidatos para todos los patrones conocidos:
+    - Nuevo formato: haircuts-{tipo}-{mes}-{anio}.xlsx/.xls
+    - Variantes raíz y /paginas/: Haircut, Haircuts, HAIRCUT_
+    - Extensiones: .xlsx, .xls, .pdf
     """
     mes_l = mes.lower()
+    mes_cap = mes_capitalizado(mes_l)
+    mes_up = mes_mayus(mes_l)
 
-    # Construir listados
-    nuevos = candidatos_nuevos(tipo, mes_l, anio)
-    if tipo == "haircuts-repos":
-        legados = candidatos_legados_repos(mes_l, anio)
-    else:
-        legados = candidatos_legados_deuda(mes_l, anio)
+    candidatos = []
 
-    # Prioridad según año
-    if anio <= 2019:
-        return legados + nuevos
-    else:
-        return nuevos + legados
+    # Nuevo formato
+    base_new = f"{BASE_CLOUDFRONT}/{tipo}-{mes_l}-{anio}"
+    candidatos += [
+        (f"{base_new}.xlsx", "XLSX"),
+        (f"{base_new}.xls", "XLS"),
+    ]
+
+    # Variantes raíz (sin /paginas/)
+    for prefix in ["Haircut", "Haircuts"]:
+        for ext in ["xlsx", "xls"]:
+            fname = f"{prefix} {mes_cap} {anio}.{ext}"
+            candidatos.append((f"{BASE_CLOUDFRONT}/{quote(fname)}", ext.upper()))
+
+    # Variantes en /paginas/
+    for prefix in ["Haircut", "Haircuts"]:
+        for ext in ["xlsx", "xls", "pdf"]:
+            fname = f"{prefix} {mes_cap} {anio}.{ext}"
+            candidatos.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext.upper()))
+
+    # HAIRCUT_{MES}_{AÑO} (PDF y Excel)
+    for ext in ["pdf", "xls", "xlsx"]:
+        fname = f"HAIRCUT_{mes_up}_{anio}.{ext}"
+        candidatos.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext.upper()))
+        fname2 = f"haircut_{mes_up}_{anio}.{ext}"
+        candidatos.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname2)}", ext.upper()))
+
+    return candidatos
 
 def resolver_url_archivo(tipo: str, mes: str, anio: int) -> tuple[str | None, str | None, list[tuple[str, str]]]:
-    """
-    Itera candidatos y devuelve la primera URL válida y su tipo (XLSX/XLS/PDF),
-    y además devuelve la lista de candidatos para diagnóstico.
-    """
     cand = construir_candidatos(tipo, mes, anio)
     for url, ext in cand:
         if validar_existencia_archivo(url):
@@ -177,7 +143,7 @@ def flujo_descarga(tipo_sel: str, mes_sel: str, anio_sel: int):
         st.dataframe(pd.DataFrame(cand, columns=["URL", "Tipo"]), use_container_width=True)
 
     if not url_archivo:
-        st.error("Archivo no encontrado con los patrones disponibles. Puede que aún no esté publicado.")
+        st.error("Archivo no encontrado con los patrones disponibles.")
         return
 
     st.success(f"Archivo encontrado ({tipo_archivo}): {url_archivo}")
@@ -195,7 +161,6 @@ def flujo_descarga(tipo_sel: str, mes_sel: str, anio_sel: int):
         key=f"dl-{tipo_sel}-{mes_sel}-{anio_sel}"
     )
 
-    # Vista previa para Excel
     if tipo_archivo in ["XLSX", "XLS"]:
         try:
             with io.BytesIO(binario) as bio:
