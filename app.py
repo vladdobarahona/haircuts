@@ -1,5 +1,4 @@
 # Autor: Vladimir Alonso B. P. (para uso empresarial)
-
 # -*- coding: utf-8 -*-
 """
 Haircuts DCV – Repos y Deuda Externa (BanRep) • Streamlit App
@@ -8,8 +7,9 @@ Fecha: 2026-01-05
 
 Mejoras:
 - Validación automática (HEAD) antes de descargar.
-- Modo batch: lista todos los meses del año según tipo seleccionado.
-- Texto adicional en color naranja.
+- Resolución de URL con múltiples patrones (nuevo y legados 2019+).
+- Modo batch según tipo seleccionado (repos, deuda, ambos).
+- Texto adicional en color naranja y fuente Century Gothic.
 """
 
 import io
@@ -18,6 +18,7 @@ import datetime as dt
 import pandas as pd
 import requests
 import streamlit as st
+from urllib.parse import quote
 
 # -----------------------------
 # Configuración de la página
@@ -26,42 +27,124 @@ st.set_page_config(page_title="Haircuts DCV – BanRep", page_icon="💼", layou
 st.title("Haircuts DCV – Repos y Deuda Externa (BanRep)")
 st.caption("Descarga directa desde el repositorio oficial (CloudFront) del Banco de la República.")
 st.markdown(
-    "<span style='color:#F59B1D; font-size:0.5em; font-family:\"Century Gothic\", sans-serif; direction: rtl; text-align: right; display: block;'>"
+    "<span style='color:#F59B1D; font-size:0.5em; font-family:\"Century Gothic\", sans-serif;'>"
     "Creado por Copilot con base a idea de web scrapping en selenium originada por Vladimir Barahona."
     "</span>",
     unsafe_allow_html=True
 )
-
+# Si quieres RTL, descomenta el siguiente bloque:
+# st.markdown(
+#     "<span style='color:#F59B1D; font-size:0.5em; font-family:\"Century Gothic\", sans-serif; direction: rtl; text-align: right; display: block;'>"
+#     "Creado por Copilot con base a idea de web scrapping en selenium originada por Vladimir Barahona."
+#     "</span>",
+#     unsafe_allow_html=True
+# )
 
 # -----------------------------
 # Constantes y utilidades
 # -----------------------------
 BASE_CLOUDFRONT = "https://d1b4gd4m8561gs.cloudfront.net/sites/default/files"
 
-def listar_meses():
-    return [
-        "enero", "febrero", "marzo", "abril", "mayo", "junio",
-        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
-    ]
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (haircuts-app; +https://github.com/tu-usuario/haircuts-app)"
+}
 
-def construir_url(tipo: str, mes: str, anio: int) -> str:
-    return f"{BASE_CLOUDFRONT}/{tipo}-{mes}-{anio}.xlsx"
+MESES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+]
+
+def listar_meses():
+    return MESES
+
+def mes_capitalizado(mes: str) -> str:
+    """enero -> Enero"""
+    return mes[:1].upper() + mes[1:].lower()
+
+def mes_mayus(mes: str) -> str:
+    """enero -> ENERO (para patrones tipo HAIRCUT_ENERO_2019.pdf)"""
+    return mes.upper()
 
 def validar_existencia_archivo(url: str) -> bool:
+    """Verifica si el archivo existe en CloudFront usando HEAD."""
     try:
-        r = requests.head(url, timeout=15)
+        r = requests.head(url, headers=HEADERS, timeout=15)
         return r.status_code == 200
     except Exception:
         return False
 
 def descargar_binario(url: str) -> bytes | None:
     try:
-        r = requests.get(url, timeout=30)
+        r = requests.get(url, headers=HEADERS, timeout=30)
         if r.status_code == 200:
             return r.content
         return None
     except Exception:
         return None
+
+def construir_candidatos(tipo: str, mes: str, anio: int) -> list[tuple[str, str]]:
+    """
+    Genera una lista ordenada de candidatos (url, ext) para el tipo/mes/año.
+    Prioridades:
+      1) Nuevo formato (sin /paginas/), con .xlsx y .pdf (de ser el caso).
+      2) Legados en /paginas/: espacios y mayúsculas, .xls/.xlsx para repos;
+         y HAIRCUT_{MES}_{AÑO}.pdf/.xls/.xlsx para deuda externa.
+    """
+    candidatos: list[tuple[str, str]] = []
+    mes_l = mes.lower()
+    mes_cap = mes_capitalizado(mes_l)
+    mes_up = mes_mayus(mes_l)
+
+    # --- Nuevo formato (observado en publicaciones recientes) ---
+    # Repos / Deuda: haircuts-{tipo}-{mes}-{anio}.xlsx
+    # Deuda puede ocasionalmente ser PDF en recientes; incluimos como opción.
+    base_new = f"{BASE_CLOUDFRONT}/{tipo}-{mes_l}-{anio}"
+    candidatos += [
+        (f"{base_new}.xlsx", "XLSX"),
+        (f"{base_new}.xls", "XLS"),       # Por si algún mes quedó en .xls
+        (f"{base_new}.pdf", "PDF"),       # Deuda externa a veces puede ser PDF
+    ]
+
+    # --- Formatos legados en /paginas/ ---
+    # Repos (ejemplo 2019): /paginas/Haircut Enero 2019.xls
+    if tipo == "haircuts-repos":
+        filename_space_xls  = f"Haircut {mes_cap} {anio}.xls"
+        filename_space_xlsx = f"Haircut {mes_cap} {anio}.xlsx"
+        # Algunas publicaciones podrían tener "Haircuts " (plural) – cubrimos variante
+        filename_spaces2_xls  = f"Haircuts {mes_cap} {anio}.xls"
+        filename_spaces2_xlsx = f"Haircuts {mes_cap} {anio}.xlsx"
+
+        for fname, ext in [
+            (filename_space_xlsx, "XLSX"),
+            (filename_space_xls,  "XLS"),
+            (filename_spaces2_xlsx, "XLSX"),
+            (filename_spaces2_xls,  "XLS"),
+        ]:
+            url = f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}"
+            candidatos.append((url, ext))
+
+    # Deuda externa (ejemplo 2019): /paginas/HAIRCUT_ENERO_2019.pdf
+    elif tipo == "haircuts-deuda-externa":
+        for ext in ["pdf", "xls", "xlsx"]:
+            fname = f"HAIRCUT_{mes_up}_{anio}.{ext}"
+            url = f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}"
+            candidatos.append((url, ext.upper()))
+        # Por si existe variante minúscula
+        for ext in ["pdf", "xls", "xlsx"]:
+            fname = f"haircut_{mes_up}_{anio}.{ext}"
+            url = f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}"
+            candidatos.append((url, ext.upper()))
+
+    return candidatos
+
+def resolver_url_archivo(tipo: str, mes: str, anio: int) -> tuple[str | None, str | None]:
+    """
+    Itera candidatos y devuelve la primera URL válida y su tipo (XLSX/XLS/PDF).
+    """
+    for url, ext in construir_candidatos(tipo, mes, anio):
+        if validar_existencia_archivo(url):
+            return url, ext
+    return None, None
 
 # -----------------------------
 # Interfaz
@@ -83,55 +166,63 @@ modo_batch = st.checkbox("Modo batch: listar todos los meses del año")
 # Funciones principales
 # -----------------------------
 def flujo_descarga(tipo_sel: str, mes_sel: str, anio_sel: int):
-    url = construir_url(tipo_sel, mes_sel, anio_sel)
-    st.info(f"URL construida: {url}")
-
-    if not validar_existencia_archivo(url):
-        st.error("Archivo no encontrado. Puede que aún no esté publicado.")
+    url_archivo, tipo_archivo = resolver_url_archivo(tipo_sel, mes_sel, anio_sel)
+    if not url_archivo:
+        st.error("Archivo no encontrado con los patrones disponibles. Puede que aún no esté publicado.")
+        # Mostramos todas las candidatas (útil para depurar)
+        with st.expander("Ver candidatos generados"):
+            df_cand = pd.DataFrame(construir_candidatos(tipo_sel, mes_sel, anio_sel), columns=["URL", "Tipo"])
+            st.dataframe(df_cand, use_container_width=True)
         return
 
-    binario = descargar_binario(url)
+    st.success(f"Archivo encontrado ({tipo_archivo}): {url_archivo}")
+    binario = descargar_binario(url_archivo)
     if not binario:
         st.error("Fallo al descargar el archivo.")
         return
 
-    nombre_archivo = f"{tipo_sel}-{mes_sel}-{anio_sel}.xlsx"
+    nombre_archivo = f"{tipo_sel}-{mes_sel}-{anio_sel}.{tipo_archivo.lower()}"
     st.download_button(
-        f"Descargar Excel",
+        f"Descargar {tipo_archivo}",
         data=binario,
         file_name=nombre_archivo,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        mime="application/octet-stream",
         key=f"dl-{tipo_sel}-{mes_sel}-{anio_sel}"
     )
 
-    try:
-        with io.BytesIO(binario) as bio:
-            df_preview = pd.read_excel(bio, engine="openpyxl")
-        st.subheader("Vista previa (primeras filas)")
-        st.dataframe(df_preview.head(50), use_container_width=True)
-    except Exception as e:
-        st.warning(f"No fue posible mostrar vista previa: {e}")
+    # Vista previa para Excel
+    if tipo_archivo in ["XLSX", "XLS"]:
+        try:
+            with io.BytesIO(binario) as bio:
+                df_preview = pd.read_excel(bio, engine="openpyxl")
+            st.subheader("Vista previa (primeras filas)")
+            st.dataframe(df_preview.head(50), use_container_width=True)
+        except Exception as e:
+            st.warning(f"No fue posible mostrar vista previa: {e}")
+    else:
+        st.caption("Vista previa no disponible para archivos PDF.")
 
 def descargar_batch(anio_sel: int, tipo_sel: str):
     meses = listar_meses()
     tipos = ["haircuts-repos", "haircuts-deuda-externa"] if tipo_sel == "ambos" else [tipo_sel]
     resultados = []
     archivos_zip = io.BytesIO()
+
     with zipfile.ZipFile(archivos_zip, "w") as zipf:
         for mes in meses:
-            for tipo in tipos:
-                url = construir_url(tipo, mes, anio_sel)
-                existe = validar_existencia_archivo(url)
-                if existe:
-                    binario = descargar_binario(url)
+            for tipo_iter in tipos:
+                url_archivo, tipo_archivo = resolver_url_archivo(tipo_iter, mes, anio_sel)
+                if url_archivo:
+                    binario = descargar_binario(url_archivo)
                     if binario:
-                        nombre_archivo = f"{tipo}-{mes}-{anio_sel}.xlsx"
+                        nombre_archivo = f"{tipo_iter}-{mes}-{anio_sel}.{(tipo_archivo or 'bin').lower()}"
                         zipf.writestr(nombre_archivo, binario)
-                        resultados.append({"Mes": mes, "Tipo": tipo, "Estado": "Disponible"})
+                        resultados.append({"Mes": mes, "Tipo": tipo_iter, "Estado": "Disponible", "URL": url_archivo})
                     else:
-                        resultados.append({"Mes": mes, "Tipo": tipo, "Estado": "Error descarga"})
+                        resultados.append({"Mes": mes, "Tipo": tipo_iter, "Estado": "Error descarga", "URL": url_archivo})
                 else:
-                    resultados.append({"Mes": mes, "Tipo": tipo, "Estado": "No disponible"})
+                    resultados.append({"Mes": mes, "Tipo": tipo_iter, "Estado": "No disponible", "URL": None})
+
     return resultados, archivos_zip
 
 # -----------------------------
@@ -142,7 +233,7 @@ if st.button("Buscar y descargar"):
         if modo_batch:
             resultados, archivos_zip = descargar_batch(year, tipo)
             st.subheader(f"Resultados para {year}")
-            st.dataframe(pd.DataFrame(resultados))
+            st.dataframe(pd.DataFrame(resultados), use_container_width=True)
             st.download_button(
                 "Descargar ZIP con archivos disponibles",
                 data=archivos_zip.getvalue(),
