@@ -1,5 +1,7 @@
 # Autor: Vladimir Alonso B. P. (para uso empresarial)
 # -*- coding: utf-8 -*-
+
+# -*- coding: utf-8 -*-
 """
 Haircuts DCV – Repos y Deuda Externa (BanRep) • Streamlit App
 Autor: vbarahona
@@ -7,7 +9,8 @@ Fecha: 2026-01-05
 
 Mejoras:
 - Validación automática (HEAD) antes de descargar.
-- Resolución de URL con múltiples patrones (nuevo y legados 2019+).
+- Resolución de URL con múltiples patrones (nuevo y legados).
+- PRIORIDAD: para años <= 2019 se intentan primero las rutas legadas (/paginas/...).
 - Modo batch según tipo seleccionado (repos, deuda, ambos).
 - Texto adicional en color naranja y fuente Century Gothic.
 """
@@ -32,13 +35,6 @@ st.markdown(
     "</span>",
     unsafe_allow_html=True
 )
-# Si quieres RTL, descomenta el siguiente bloque:
-# st.markdown(
-#     "<span style='color:#F59B1D; font-size:0.5em; font-family:\"Century Gothic\", sans-serif; direction: rtl; text-align: right; display: block;'>"
-#     "Creado por Copilot con base a idea de web scrapping en selenium originada por Vladimir Barahona."
-#     "</span>",
-#     unsafe_allow_html=True
-# )
 
 # -----------------------------
 # Constantes y utilidades
@@ -82,69 +78,78 @@ def descargar_binario(url: str) -> bytes | None:
     except Exception:
         return None
 
-def construir_candidatos(tipo: str, mes: str, anio: int) -> list[tuple[str, str]]:
+def candidatos_legados_repos(mes: str, anio: int) -> list[tuple[str, str]]:
     """
-    Genera una lista ordenada de candidatos (url, ext) para el tipo/mes/año.
-    Prioridades:
-      1) Nuevo formato (sin /paginas/), con .xlsx y .pdf (de ser el caso).
-      2) Legados en /paginas/: espacios y mayúsculas, .xls/.xlsx para repos;
-         y HAIRCUT_{MES}_{AÑO}.pdf/.xls/.xlsx para deuda externa.
+    Repos (ejemplos 2019): /paginas/Haircut Enero 2019.xls (.xlsx), y variante 'Haircuts '.
     """
-    candidatos: list[tuple[str, str]] = []
-    mes_l = mes.lower()
-    mes_cap = mes_capitalizado(mes_l)
-    mes_up = mes_mayus(mes_l)
+    mes_cap = mes_capitalizado(mes)
+    files = [
+        (f"Haircut {mes_cap} {anio}.xlsx", "XLSX"),
+        (f"Haircut {mes_cap} {anio}.xls",  "XLS"),
+        (f"Haircuts {mes_cap} {anio}.xlsx", "XLSX"),
+        (f"Haircuts {mes_cap} {anio}.xls",  "XLS"),
+    ]
+    out = []
+    for fname, ext in files:
+        out.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext))
+    return out
 
-    # --- Nuevo formato (observado en publicaciones recientes) ---
-    # Repos / Deuda: haircuts-{tipo}-{mes}-{anio}.xlsx
-    # Deuda puede ocasionalmente ser PDF en recientes; incluimos como opción.
-    base_new = f"{BASE_CLOUDFRONT}/{tipo}-{mes_l}-{anio}"
-    candidatos += [
+def candidatos_legados_deuda(mes: str, anio: int) -> list[tuple[str, str]]:
+    """
+    Deuda externa (ejemplos 2019): /paginas/HAIRCUT_ENERO_2019.pdf/.xls/.xlsx, y variante minúscula.
+    """
+    mes_up = mes_mayus(mes)
+    out = []
+    for ext in ["pdf", "xls", "xlsx"]:
+        fname = f"HAIRCUT_{mes_up}_{anio}.{ext}"
+        out.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext.upper()))
+    for ext in ["pdf", "xls", "xlsx"]:
+        fname = f"haircut_{mes_up}_{anio}.{ext}"
+        out.append((f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}", ext.upper()))
+    return out
+
+def candidatos_nuevos(tipo: str, mes: str, anio: int) -> list[tuple[str, str]]:
+    """
+    Nuevo formato observado: haircuts-{tipo}-{mes}-{anio}.xlsx (+.xls/.pdf como fallback).
+    """
+    base_new = f"{BASE_CLOUDFRONT}/{tipo}-{mes}-{anio}"
+    return [
         (f"{base_new}.xlsx", "XLSX"),
-        (f"{base_new}.xls", "XLS"),       # Por si algún mes quedó en .xls
-        (f"{base_new}.pdf", "PDF"),       # Deuda externa a veces puede ser PDF
+        (f"{base_new}.xls",  "XLS"),
+        (f"{base_new}.pdf",  "PDF"),  # en deuda externa a veces hay PDF
     ]
 
-    # --- Formatos legados en /paginas/ ---
-    # Repos (ejemplo 2019): /paginas/Haircut Enero 2019.xls
+def construir_candidatos(tipo: str, mes: str, anio: int) -> list[tuple[str, str]]:
+    """
+    Genera candidatos en el **orden correcto**:
+      - si anio <= 2019: primero legados, luego nuevos.
+      - si anio > 2019: primero nuevos, luego legados (respaldo).
+    """
+    mes_l = mes.lower()
+
+    # Construir listados
+    nuevos = candidatos_nuevos(tipo, mes_l, anio)
     if tipo == "haircuts-repos":
-        filename_space_xls  = f"Haircut {mes_cap} {anio}.xls"
-        filename_space_xlsx = f"Haircut {mes_cap} {anio}.xlsx"
-        # Algunas publicaciones podrían tener "Haircuts " (plural) – cubrimos variante
-        filename_spaces2_xls  = f"Haircuts {mes_cap} {anio}.xls"
-        filename_spaces2_xlsx = f"Haircuts {mes_cap} {anio}.xlsx"
+        legados = candidatos_legados_repos(mes_l, anio)
+    else:
+        legados = candidatos_legados_deuda(mes_l, anio)
 
-        for fname, ext in [
-            (filename_space_xlsx, "XLSX"),
-            (filename_space_xls,  "XLS"),
-            (filename_spaces2_xlsx, "XLSX"),
-            (filename_spaces2_xls,  "XLS"),
-        ]:
-            url = f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}"
-            candidatos.append((url, ext))
+    # Prioridad según año
+    if anio <= 2019:
+        return legados + nuevos
+    else:
+        return nuevos + legados
 
-    # Deuda externa (ejemplo 2019): /paginas/HAIRCUT_ENERO_2019.pdf
-    elif tipo == "haircuts-deuda-externa":
-        for ext in ["pdf", "xls", "xlsx"]:
-            fname = f"HAIRCUT_{mes_up}_{anio}.{ext}"
-            url = f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}"
-            candidatos.append((url, ext.upper()))
-        # Por si existe variante minúscula
-        for ext in ["pdf", "xls", "xlsx"]:
-            fname = f"haircut_{mes_up}_{anio}.{ext}"
-            url = f"{BASE_CLOUDFRONT}/paginas/{quote(fname)}"
-            candidatos.append((url, ext.upper()))
-
-    return candidatos
-
-def resolver_url_archivo(tipo: str, mes: str, anio: int) -> tuple[str | None, str | None]:
+def resolver_url_archivo(tipo: str, mes: str, anio: int) -> tuple[str | None, str | None, list[tuple[str, str]]]:
     """
-    Itera candidatos y devuelve la primera URL válida y su tipo (XLSX/XLS/PDF).
+    Itera candidatos y devuelve la primera URL válida y su tipo (XLSX/XLS/PDF),
+    y además devuelve la lista de candidatos para diagnóstico.
     """
-    for url, ext in construir_candidatos(tipo, mes, anio):
+    cand = construir_candidatos(tipo, mes, anio)
+    for url, ext in cand:
         if validar_existencia_archivo(url):
-            return url, ext
-    return None, None
+            return url, ext, cand
+    return None, None, cand
 
 # -----------------------------
 # Interfaz
@@ -166,13 +171,13 @@ modo_batch = st.checkbox("Modo batch: listar todos los meses del año")
 # Funciones principales
 # -----------------------------
 def flujo_descarga(tipo_sel: str, mes_sel: str, anio_sel: int):
-    url_archivo, tipo_archivo = resolver_url_archivo(tipo_sel, mes_sel, anio_sel)
+    url_archivo, tipo_archivo, cand = resolver_url_archivo(tipo_sel, mes_sel, anio_sel)
+
+    with st.expander("Diagnóstico: candidatos generados y orden de prioridad"):
+        st.dataframe(pd.DataFrame(cand, columns=["URL", "Tipo"]), use_container_width=True)
+
     if not url_archivo:
         st.error("Archivo no encontrado con los patrones disponibles. Puede que aún no esté publicado.")
-        # Mostramos todas las candidatas (útil para depurar)
-        with st.expander("Ver candidatos generados"):
-            df_cand = pd.DataFrame(construir_candidatos(tipo_sel, mes_sel, anio_sel), columns=["URL", "Tipo"])
-            st.dataframe(df_cand, use_container_width=True)
         return
 
     st.success(f"Archivo encontrado ({tipo_archivo}): {url_archivo}")
@@ -211,7 +216,7 @@ def descargar_batch(anio_sel: int, tipo_sel: str):
     with zipfile.ZipFile(archivos_zip, "w") as zipf:
         for mes in meses:
             for tipo_iter in tipos:
-                url_archivo, tipo_archivo = resolver_url_archivo(tipo_iter, mes, anio_sel)
+                url_archivo, tipo_archivo, _ = resolver_url_archivo(tipo_iter, mes, anio_sel)
                 if url_archivo:
                     binario = descargar_binario(url_archivo)
                     if binario:
