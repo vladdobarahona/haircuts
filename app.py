@@ -36,7 +36,7 @@ st.title("Haircuts DCV – Repos y Deuda Externa (BanRep)")
 st.caption("Descarga directa desde el repositorio oficial (CloudFront) del Banco de la República.")
 st.markdown(
     "<span style='color:#F59B1D; font-size:0.5em; font-family:\"Century Gothic\", sans-serif;'>"
-    "Creado por Copilot con base a idea de web scrapping en selenium originada por Vladimir Barahona."
+    "Idea de web scrapping en selenium originada por Vladimir Barahona."
     "</span>",
     unsafe_allow_html=True
 )
