@@ -1,24 +1,23 @@
 # Autor: Vladimir Alonso B. P. (para uso empresarial)
+
 # -*- coding: utf-8 -*-
 """
 Haircuts DCV – Repos y Deuda Externa (BanRep) • Streamlit
 Descarga directa desde CloudFront con catálogo por mes/año (sin huecos) y reglas recientes.
-
 Autor: vbarahona (refactor M365 Copilot)
 Fecha: 2026-01-06
 
-Cambios clave (según tu listado):
+Cambios clave según tu listado:
 - Catálogo completo por (tipo, año, mes) para evitar "excepciones" como huecos.
-- Deuda Externa 2024:
-  * Ene–Mar: publicaciones en raíz (Haircut Enero 2024.xlsx, HAIRCUT_FEBRERO_2024.pdf, haircuts-deuda-externa-marzo-2024.pdf).
-  * Abril: dcv-haircuts-deuda-externa-abril-2024.pdf.
-  * Mayo: dcv-haircuts-deuda-externa-mayo-2024_0.xlsx (único con `_0`).
-  * Jun–Dic: dcv-haircuts-deuda-externa-{mes}-{año}.xlsx (sin `_0`), excepto Agosto: Haircut-Repos-Agosto-2024.xlsx.
-- Deuda Externa 2025+: haircuts-deuda-externa-{mes}-{año}.xlsx (sin dcv-).
-- Repos 2024 mayo+: dcv-haircuts-repos-{mes}-{año}.xlsx (sin `_0`).
-- Repos 2025+: haircuts-repos-{mes}-{año}.xlsx (sin dcv-).
-- Excepción real: Repos marzo 2024 → haircut2024-03-27.xls (única).
-- Patrones legado ampliados (raíz y /paginas/).
+- Deuda Externa reciente:
+  - 2024-enero..abril  → dcv-haircuts-deuda-externa-{mes}-{año}.pdf (con excepciones para enero y marzo).
+  - 2024-mayo          → dcv-haircuts-deuda-externa-mayo-2024_0.xlsx (único con _0).
+  - 2024-junio..diciembre → dcv-haircuts-deuda-externa-{mes}-{año}.xlsx.
+  - 2025+ → haircuts-deuda-externa-{mes}-{año}.xlsx (base sin dcv-).
+- Repos reciente:
+  - 2024-mayo..diciembre → dcv-haircuts-repos-{mes}-{año}.xlsx.
+  - 2025+ → haircuts-repos-{mes}-{año}.xlsx (base sin dcv-).
+- Excepciones reales únicas (según tu listado).
 
 Requisitos:
     pip install streamlit requests pandas openpyxl xlrd
@@ -119,10 +118,8 @@ def _urls_legado_por_mes(tipo: str, anio: int, mes: str) -> list[str]:
     Variantes 'legadas' preferidas por año:
     - Raíz y /paginas/ con 'Haircut' y 'Haircuts' en xlsx/xls.
     - Para deuda externa, también PDF en raíz y /paginas/ con HAIRCUT_{MES_UP}_{AÑO}.
-    - Variantes con guion bajo y 'de':
-        * Haircuts_{mes} {Año}.pdf
-        * Haircut_{mes}_{Año}.pdf
-        * Haircuts {MesCap} de {Año}.pdf
+    - Variantes con guion bajo: Haircut_{mes}_{año}.pdf y Haircuts_{mes} {año}.pdf.
+    - Variante hispana: "Haircuts {MesCap} de {Año}.pdf" (raíz).
     """
     mes_l = mes.lower()
     mes_cap = mes_capitalizado(mes_l)
@@ -138,18 +135,17 @@ def _urls_legado_por_mes(tipo: str, anio: int, mes: str) -> list[str]:
 
     urls = []
 
-    # PDFs y variantes específicas para deuda externa (también excel como respaldo)
+    # PDFs y variantes específicas para deuda externa (prioridad primero)
     if tipo == "haircuts-deuda-externa":
         # HAIRCUT_{MES_UP}_{AÑO} en raíz y /paginas/
         for base_dir in [BASE_CLOUDFRONT, f"{BASE_CLOUDFRONT}/paginas"]:
             urls.append(f"{base_dir}/HAIRCUT_{mes_up}_{anio}.pdf")
             urls.append(f"{base_dir}/HAIRCUT_{mes_up}_{anio}.xls")
             urls.append(f"{base_dir}/HAIRCUT_{mes_up}_{anio}.xlsx")
-        # Variantes con guion bajo y minúsculas
+        # Variantes con guion bajo y minúsculas + forma hispana
         urls.append(f"{BASE_CLOUDFRONT}/paginas/{quote(f'haircut_{mes_up}_{anio}.pdf')}")
         urls.append(f"{BASE_CLOUDFRONT}/{quote(f'Haircut_{mes_l}_{anio}.pdf')}")
         urls.append(f"{BASE_CLOUDFRONT}/{quote(f'Haircuts_{mes_l} {anio}.pdf')}")
-        # Variante hispana con "de"
         urls.append(f"{BASE_CLOUDFRONT}/{quote(f'Haircuts {mes_cap} de {anio}.pdf')}")
 
     # 'Haircut' / 'Haircuts' en raíz y /paginas/
@@ -163,42 +159,37 @@ def _urls_legado_por_mes(tipo: str, anio: int, mes: str) -> list[str]:
 
 def _urls_recientes_por_mes(tipo: str, anio: int, mes: str) -> list[str]:
     """
-    Estructura 'reciente' con reglas específicas:
+    Estructura 'reciente' (haircuts/dcv-haircuts) con reglas específicas:
       - DEUDA EXTERNA:
-        * 2024-abril        → dcv-haircuts-deuda-externa-{mes}-{año}.pdf
-        * 2024-mayo         → dcv-haircuts-deuda-externa-mayo-2024_0.xlsx
-        * 2024-junio..dic   → dcv-haircuts-deuda-externa-{mes}-{año}.xlsx
-        * 2025+             → haircuts-deuda-externa-{mes}-{año}.xlsx
-        (Ene–Mar 2024 se cubren con legado + excepciones únicas)
+        * 2024-enero..abril  → solo .pdf (salvo excepciones explícitas listadas).
+        * 2024-mayo          → solo _0.xlsx (exclusivo).
+        * 2024-junio..diciembre → solo .xlsx (sin _0).
+        * 2025+ → base 'haircuts-deuda-externa-{mes}-{año}.xlsx' (sin dcv-).
       - REPOS:
-        * 2024-mayo..dic    → dcv-haircuts-repos-{mes}-{año}.xlsx
-        * 2025+             → haircuts-repos-{mes}-{año}.xlsx
+        * 2024-mayo..diciembre → base 'dcv-haircuts-repos-{mes}-{año}.xlsx'.
+        * 2025+ → base 'haircuts-repos-{mes}-{año}.xlsx' (sin dcv-).
     """
     mes_l = mes.lower()
-    tipo_slug_dcv = "deuda-externa" if tipo == "haircuts-deuda-externa" else "repos"
-    base_dcv = f"{BASE_CLOUDFRONT}/dcv-haircuts-{tipo_slug_dcv}-{mes_l}-{anio}"
-    base_new = f"{BASE_CLOUDFRONT}/haircuts-{'deuda-externa' if tipo=='haircuts-deuda-externa' else 'repos'}-{mes_l}-{anio}"
+    tipo_slug = "deuda-externa" if tipo == "haircuts-deuda-externa" else "repos"
 
     if tipo == "haircuts-deuda-externa":
         if anio == 2024:
-            if mes_l == "abril":
-                return [f"{base_dcv}.pdf"]
+            base = f"{BASE_CLOUDFRONT}/dcv-haircuts-{tipo_slug}-{mes_l}-{anio}"
+            if mes_l in {"enero", "febrero", "marzo", "abril"}:
+                return [f"{base}.pdf"]
             if mes_l == "mayo":
-                return [f"{base_dcv}_0.xlsx"]
-            if mes_l in {"junio", "julio", "septiembre", "octubre", "noviembre", "diciembre"}:
-                return [f"{base_dcv}.xlsx"]
-            # enero, febrero, marzo (se cubren por legado o excepción única)
-            return []
-        # 2025+ (sin dcv-)
-        return [f"{base_new}.xlsx"]
-    else:
-        # repos
-        if anio == 2024 and mes_l in {"mayo", "junio", "julio", "septiembre", "octubre", "noviembre", "diciembre"}:
-            return [f"{base_dcv}.xlsx"]
-        if anio >= 2025:
-            return [f"{base_new}.xlsx"]
-        # antes de 2024 mayo: legado
-        return []
+                return [f"{base}_0.xlsx"]
+            return [f"{base}.xlsx"]
+        else:  # 2025+
+            base = f"{BASE_CLOUDFRONT}/haircuts-{tipo_slug}-{mes_l}-{anio}"
+            return [f"{base}.xlsx"]
+    else:  # repos
+        if anio == 2024:
+            base = f"{BASE_CLOUDFRONT}/dcv-haircuts-{tipo_slug}-{mes_l}-{anio}"
+            return [f"{base}.xlsx"]
+        else:  # 2025+
+            base = f"{BASE_CLOUDFRONT}/haircuts-{tipo_slug}-{mes_l}-{anio}"
+            return [f"{base}.xlsx"]
 
 # Excepciones verdaderamente únicas (siguen tu listado)
 EXCEPCIONES_UNICAS: dict[tuple[str, int, str], list[str]] = {
@@ -209,10 +200,6 @@ EXCEPCIONES_UNICAS: dict[tuple[str, int, str], list[str]] = {
     # --- Deuda enero 2024 (xlsx en raíz)
     ("haircuts-deuda-externa", 2024, "enero"): [
         f"{BASE_CLOUDFRONT}/{quote('Haircut Enero 2024.xlsx')}"
-    ],
-    # --- Deuda febrero 2024 (pdf en raíz)
-    ("haircuts-deuda-externa", 2024, "febrero"): [
-        f"{BASE_CLOUDFRONT}/{quote('HAIRCUT_FEBRERO_2024.pdf')}"
     ],
     # --- Deuda marzo 2024 (pdf en raíz sin dcv)
     ("haircuts-deuda-externa", 2024, "marzo"): [
@@ -240,17 +227,23 @@ def _estructura_deseada(tipo: str, anio: int, mes: str) -> list[str]:
     """
     Devuelve la(s) estructura(s) deseada(s) por período:
     - Excepción única → solo esa.
-    - 2024 (a partir de abril) / 2025+ → recientes 'dcv-haircuts-' o 'haircuts-'.
-    - Resto → legados (para deuda, PDF también priorizado vía variantes).
+    - 2025+ → reciente 'haircuts-...'.
+    - 2024 mayo..dic → 'dcv-haircuts-...' según reglas arriba.
+    - Resto → legados (para deuda, PDF primero).
     """
     key = (tipo, anio, mes.lower())
     if key in EXCEPCIONES_UNICAS:
         return EXCEPCIONES_UNICAS[key][:]
 
-    # 2024 y 2025+ recientes
-    recientes = _urls_recientes_por_mes(tipo, anio, mes)
-    if recientes:
-        return recientes
+    # 2025 en adelante: nueva estructura para ambos tipos (base 'haircuts-')
+    if anio >= 2025:
+        return _urls_recientes_por_mes(tipo, anio, mes)
+
+    # 2024: a partir de mayo predominan 'dcv-haircuts-...'
+    if anio == 2024 and mes.lower() in {
+        "mayo", "junio", "julio", "septiembre", "octubre", "noviembre", "diciembre"
+    }:
+        return _urls_recientes_por_mes(tipo, anio, mes)
 
     # Resto: patrones legados
     return _urls_legado_por_mes(tipo, anio, mes)
@@ -284,34 +277,37 @@ def candidatos_reglas(tipo: str, anio: int, mes: str) -> list[str]:
     mes_cap = mes_capitalizado(mes_l)
     mes_up = mes_mayus(mes_l)
 
-    # 1) Regla reciente (alineada a las reglas arriba)
-    tipo_slug_dcv = "deuda-externa" if tipo == "haircuts-deuda-externa" else "repos"
-    base_dcv = f"{BASE_CLOUDFRONT}/dcv-haircuts-{tipo_slug_dcv}-{mes_l}-{anio}"
-    base_new = f"{BASE_CLOUDFRONT}/haircuts-{'deuda-externa' if tipo=='haircuts-deuda-externa' else 'repos'}-{mes_l}-{anio}"
+    # 1) Regla reciente (alineada a _urls_recientes_por_mes)
+    tipo_slug = "deuda-externa" if tipo == "haircuts-deuda-externa" else "repos"
     if tipo == "haircuts-deuda-externa":
-        if anio == 2024 and mes_l == "abril":
-            urls.append(f"{base_dcv}.pdf")
-        elif anio == 2024 and mes_l == "mayo":
-            urls.append(f"{base_dcv}_0.xlsx")
-        elif anio == 2024 and mes_l in {"junio", "julio", "septiembre", "octubre", "noviembre", "diciembre"}:
-            urls.append(f"{base_dcv}.xlsx")
-        elif anio >= 2025:
-            urls.append(f"{base_new}.xlsx")
+        if anio == 2024:
+            base_recent = f"{BASE_CLOUDFRONT}/dcv-haircuts-{tipo_slug}-{mes_l}-{anio}"
+            if mes_l in {"enero", "febrero", "marzo", "abril"}:
+                urls.append(f"{base_recent}.pdf")
+            elif mes_l == "mayo":
+                urls.append(f"{base_recent}_0.xlsx")
+            else:
+                urls.append(f"{base_recent}.xlsx")
+        else:
+            base_recent = f"{BASE_CLOUDFRONT}/haircuts-{tipo_slug}-{mes_l}-{anio}"
+            urls.append(f"{base_recent}.xlsx")
     else:
-        if anio == 2024 and mes_l in {"mayo", "junio", "julio", "septiembre", "octubre", "noviembre", "diciembre"}:
-            urls.append(f"{base_dcv}.xlsx")
-        elif anio >= 2025:
-            urls.append(f"{base_new}.xlsx")
+        if anio == 2024:
+            base_recent = f"{BASE_CLOUDFRONT}/dcv-haircuts-{tipo_slug}-{mes_l}-{anio}"
+            urls.append(f"{base_recent}.xlsx")
+        else:
+            base_recent = f"{BASE_CLOUDFRONT}/haircuts-{tipo_slug}-{mes_l}-{anio}"
+            urls.append(f"{base_recent}.xlsx")
 
     # 2) Patrones legados en raíz (sin /paginas/)
     for prefix in ["Haircut", "Haircuts"]:
-        for ext in ["xlsx", "xls", "pdf"]:
+        for ext in ["xlsx", "xls"]:
             fname = f"{prefix} {mes_cap} {anio}.{ext}"
             urls.append(f"{BASE_CLOUDFRONT}/{quote(fname)}")
     # Legados tipo HAIRCUT_ en raíz
     for ext in ["pdf", "xls", "xlsx"]:
         urls.append(f"{BASE_CLOUDFRONT}/HAIRCUT_{mes_up}_{anio}.{ext}")
-    # Guion bajo / minúsculas / variante "de" en raíz (deuda)
+    # Guion bajo / minúsculas en raíz
     urls.append(f"{BASE_CLOUDFRONT}/{quote(f'Haircut_{mes_l}_{anio}.pdf')}")
     urls.append(f"{BASE_CLOUDFRONT}/{quote(f'Haircuts_{mes_l} {anio}.pdf')}")
     urls.append(f"{BASE_CLOUDFRONT}/{quote(f'Haircuts {mes_cap} de {anio}.pdf')}")
@@ -336,15 +332,13 @@ def construir_candidatos(tipo: str, anio: int, mes: str) -> list[str]:
     if key in EXCEPCIONES:
         for u in EXCEPCIONES[key]:
             if u not in vistos:
-                cand.append(u)
-                vistos.add(u)
+                cand.append(u); vistos.add(u)
         if PREFILL_COMPLETO:
             return cand
 
     for u in candidatos_reglas(tipo, anio, mes):
         if u not in vistos:
-            cand.append(u)
-            vistos.add(u)
+            cand.append(u); vistos.add(u)
 
     return cand
 
